@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RELEASE_VERSION="${1:-}"
-if [[ ! "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Invalid release version. Expected semantic version (example: 10.11.0)." >&2
-  exit 1
-fi
+RELEASE="${1:?usage: validate_release.sh <release>}"
+[[ "${RELEASE}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "Invalid release format: ${RELEASE}" >&2
+  exit 2
+}
 
-echo "Release version is valid: ${RELEASE_VERSION}"
+echo "Release ${RELEASE} is valid"

@@ -1,18 +1,18 @@
 class SyncError(Exception):
-    """Base exception for synchronization failures."""
+    """Base synchronization error."""
 
 
-class ConfigurationError(SyncError):
-    """Raised when settings or mappings are invalid."""
+class ConfigError(SyncError):
+    """Configuration loading or validation error."""
 
 
-class S3ReleaseNotFoundError(SyncError):
-    """Raised when release data is missing in S3."""
+class S3Error(SyncError):
+    """S3 operation error."""
 
 
-class GitOperationError(SyncError):
-    """Raised when a git operation fails."""
+class GitError(SyncError):
+    """Git operation error."""
 
 
-class GitHubAPIError(SyncError):
-    """Raised when GitHub API request fails."""
+class GitHubError(SyncError):
+    """GitHub API operation error."""

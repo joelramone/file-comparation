@@ -12,11 +12,10 @@ class JsonFormatter(logging.Formatter):
         payload: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
-            "logger": record.name,
             "message": record.getMessage(),
         }
-        if hasattr(record, "data") and isinstance(record.data, dict):
-            payload.update(record.data)
+        if hasattr(record, "context"):
+            payload.update(getattr(record, "context"))
         return json.dumps(payload, ensure_ascii=False)
 
 
@@ -24,7 +23,6 @@ def get_logger(name: str = "sync") -> logging.Logger:
     logger = logging.getLogger(name)
     if logger.handlers:
         return logger
-
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())

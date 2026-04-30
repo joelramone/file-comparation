@@ -1,18 +1,13 @@
 # Troubleshooting
 
-## Common issues
+## Missing AWS credentials
+Ensure Jenkins or runtime has `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and region.
 
-### Missing AWS credentials
-Ensure Jenkins injects `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+## GitHub authentication failures
+Set `GITHUB_TOKEN` with repository write and pull request permissions.
 
-### Missing GitHub token
-Set `GITHUB_TOKEN` in pipeline credentials and ensure `repo` scope.
+## No changes detected
+Validate `mapping.yaml` paths and verify S3 release content exists.
 
-### No changes detected
-If all hashes match, no commit or PR is created.
-
-### Invalid mapping path
-Check `automation/config/mapping.yaml` paths target `k8s/helm/`.
-
-### Branch push denied
-Validate token permissions for branch creation and push policies.
+## Branch already exists
+The pipeline recreates branch using `git checkout -B`; ensure remote permissions allow force updates.

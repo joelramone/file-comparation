@@ -4,66 +4,51 @@ pipeline {
     timestamps()
     ansiColor('xterm')
     disableConcurrentBuilds()
-    buildDiscarder(logRotator(numToKeepStr: '30'))
   }
   parameters {
-    string(name: 'RELEASE_VERSION', defaultValue: '10.11.0', description: 'Vendor release version to sync')
-    booleanParam(name: 'DRY_RUN', defaultValue: false, description: 'Do not commit or push changes')
+    string(name: 'RELEASE_VERSION', defaultValue: '10.11.0', description: 'Release version to sync')
+    booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Run without pushing or creating PR')
   }
   environment {
     PYTHONUNBUFFERED = '1'
-    TARGET_REPO_URL = 'https://github.com/company/application-repo.git'
   }
   stages {
     stage('Checkout Automation Repository') {
       steps { checkout scm }
     }
-
-    stage('Validate Inputs') {
+    stage('Setup Python') {
       steps {
-        sh './automation/scripts/validate_release.sh ${RELEASE_VERSION}'
+        sh 'python3.12 -m venv .venv'
+        sh '. .venv/bin/activate && pip install -r automation/python/requirements.txt'
       }
     }
-
-    stage('Install Dependencies') {
-      steps {
-        sh '''
-          python3 -m venv .venv
-          . .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r automation/python/requirements.txt
-        '''
-      }
+    stage('Validate Release') {
+      steps { sh 'automation/scripts/validate_release.sh ${RELEASE_VERSION}' }
     }
-
     stage('Run Synchronization') {
-      environment {
-        GITHUB_TOKEN = credentials('github-token')
-        AWS_ACCESS_KEY_ID = credentials('aws-access-key-id')
-        AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
-      }
       steps {
-        sh '''
-          . .venv/bin/activate
-          if [ "${DRY_RUN}" = "true" ]; then
-            ./automation/scripts/run_sync.sh ${RELEASE_VERSION} --dry-run
-          else
-            ./automation/scripts/run_sync.sh ${RELEASE_VERSION}
-          fi
-        '''
+        withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+          sh '''
+            . .venv/bin/activate
+            if [ "${DRY_RUN}" = "true" ]; then
+              automation/scripts/run_sync.sh "${RELEASE_VERSION}" --dry-run
+            else
+              automation/scripts/run_sync.sh "${RELEASE_VERSION}"
+            fi
+          '''
+        }
       }
     }
   }
   post {
-    always {
-      archiveArtifacts artifacts: '/tmp/application-repo/.sync/*.json', allowEmptyArchive: true
-      cleanWs(deleteDirs: true)
-    }
     failure {
-      echo 'Sync pipeline failed. Check stage logs and troubleshooting guide.'
+      echo 'Synchronization failed.'
     }
     success {
-      echo 'Sync pipeline completed successfully.'
+      echo 'Synchronization completed successfully.'
+    }
+    always {
+      cleanWs(cleanWhenNotBuilt: false)
     }
   }
 }

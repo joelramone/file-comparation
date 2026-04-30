@@ -1,76 +1,76 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
-from .compare_engine import compare_release
-from .config_loader import load_mappings, load_settings
-from .git_manager import GitManager
+from .compare_engine import CompareEngine
+from .config_loader import load_mapping, load_settings
 from .github_client import GitHubClient
+from .git_manager import GitManager
 from .logger import get_logger
-from .manifest import write_manifest
-from .models import FileStatus, ReleaseManifest, SyncResult
-from .s3_client import S3ReleaseClient
+from .manifest import build_manifest, write_manifest
+from .models import FileStatus, SyncResult
+from .s3_client import S3Client
 
 
-class SyncEngine:
-    def __init__(self, settings_path: Path, mapping_path: Path, dry_run: bool = False) -> None:
-        self.settings = load_settings(settings_path)
-        self.mapping = load_mappings(mapping_path)
-        self.dry_run = dry_run
-        self.logger = get_logger("sync_engine")
-        self.git = GitManager()
-        self.s3 = S3ReleaseClient(self.settings.s3)
+def run_sync(release: str, settings_path: Path, mapping_path: Path, dry_run: bool) -> SyncResult:
+    logger = get_logger("sync_engine")
+    settings = load_settings(settings_path)
+    mapping = load_mapping(mapping_path)
 
-    def run(self, release: str) -> SyncResult:
-        branch = f"upgrade/{release}"
-        repo = self.git.clone_or_open(str(self.settings.github.repository_url), self.settings.workspace.clone_dir)
-        self.git.create_branch(repo, branch, self.settings.github.base_branch)
+    s3 = S3Client(bucket=settings.s3.bucket, release_prefix=settings.s3.release_prefix)
+    git_manager = GitManager()
+    repo = git_manager.clone(str(settings.github.repository_url), Path(settings.workspace.clone_dir))
 
-        source_data = self.s3.get_release_files(release, [m.s3 for m in self.mapping.mappings])
-        diffs = compare_release(source_data, self.mapping.mappings, self.settings.workspace.clone_dir)
+    git_manager.checkout(repo, settings.github.base_branch)
+    branch = f"upgrade/{release}"
+    git_manager.create_branch(repo, branch, settings.github.base_branch)
 
-        changed = []
-        for diff in diffs:
-            self.logger.info("file comparison", extra={"data": {"release": release, "file": diff.source, "status": diff.status.value}})
-            if diff.status in (FileStatus.ADDED, FileStatus.MODIFIED):
-                changed.append(diff.destination)
-                if not self.dry_run:
-                    diff.destination.parent.mkdir(parents=True, exist_ok=True)
-                    diff.destination.write_bytes(source_data[diff.source])
+    comparer = CompareEngine(s3, mapping)
+    comparisons = comparer.compare_release(release, Path(settings.workspace.clone_dir))
+    changed = [c for c in comparisons if c.status in {FileStatus.ADDED, FileStatus.MODIFIED}]
 
-        manifest = ReleaseManifest(release=release, changes=diffs)
-        write_manifest(self.settings.workspace.clone_dir / ".sync" / f"{release}.json", manifest)
+    for item in changed:
+        data = s3.download_text(release, item.s3_file)
+        target = Path(settings.workspace.clone_dir) / item.repo_file
+        logger.info("sync_change", extra={"context": {"release": release, "file": item.repo_file, "status": item.status.value}})
+        if not dry_run:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
 
-        pr_url = None
-        if changed and not self.dry_run:
-            committed = self.git.commit_all(repo, f"chore: sync vendor config for release {release}")
-            if committed:
-                self.git.push(repo, branch)
-                gh = GitHubClient.from_repo_url(str(self.settings.github.repository_url))
-                pr_url = gh.create_pull_request(
-                    title=gh.build_pr_title(release),
-                    body=gh.build_pr_body(release, [str(p) for p in changed]),
-                    head=branch,
-                    base=self.settings.github.base_branch,
-                )
+    manifest = build_manifest(release=release, dry_run=dry_run, comparisons=comparisons)
+    write_manifest(Path(settings.workspace.clone_dir) / "sync-manifest.json", manifest)
 
-        return SyncResult(release=release, branch=branch, changed_files=changed, pr_url=pr_url, dry_run=self.dry_run)
+    pr_url = None
+    if not dry_run and changed:
+        commit_message = f"chore: sync vendor config release {release}"
+        committed = git_manager.commit_all(repo, commit_message)
+        if committed:
+            git_manager.push(repo, branch)
+            gh = GitHubClient()
+            pr_url = gh.create_pull_request(
+                repository_url=str(settings.github.repository_url),
+                title=gh.build_pr_title(release),
+                body=gh.build_pr_body(release, [c.repo_file for c in changed]),
+                head=branch,
+                base=settings.github.base_branch,
+            )
+
+    return SyncResult(release=release, branch=branch, dry_run=dry_run, changed_files=changed, pr_url=pr_url)
 
 
-def main() -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Synchronize vendor configs from S3 to target repository")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Synchronize release configuration from S3 to target repository")
     parser.add_argument("--release", required=True)
     parser.add_argument("--settings", default="automation/config/settings.yaml")
     parser.add_argument("--mapping", default="automation/config/mapping.yaml")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    engine = SyncEngine(Path(args.settings), Path(args.mapping), dry_run=args.dry_run)
-    result = engine.run(args.release)
+    result = run_sync(args.release, Path(args.settings), Path(args.mapping), args.dry_run)
     print(result.model_dump_json(indent=2))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
