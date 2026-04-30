@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${RELEASE_VERSION:?RELEASE_VERSION is required}"
-: "${S3_BUCKET:?S3_BUCKET is required}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RELEASE_VERSION="${1:-}"
+DRY_RUN_FLAG="${2:-}"
+
+if [[ -z "${RELEASE_VERSION}" ]]; then
+  echo "Usage: $0 <release-version> [--dry-run]" >&2
+  exit 1
+fi
 
 python3 -m automation.python.sync_engine \
   --release "${RELEASE_VERSION}" \
-  --bucket "${S3_BUCKET}" \
-  --base-prefix "${S3_BASE_PREFIX:-elipse-releases}" \
-  --repo-root "${REPO_ROOT}" \
-  --mapping "automation/config/mapping.yaml" \
-  ${DRY_RUN:+--dry-run}
+  --settings "${REPO_ROOT}/automation/config/settings.yaml" \
+  --mapping "${REPO_ROOT}/automation/config/mapping.yaml" \
+  ${DRY_RUN_FLAG}

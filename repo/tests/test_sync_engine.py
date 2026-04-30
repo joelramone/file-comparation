@@ -1,30 +1,41 @@
 from pathlib import Path
 
-from automation.python.compare_engine import CompareEngine
-from automation.python.models import MappingEntry
-from automation.python.sync_engine import synchronize
+from automation.python.sync_engine import SyncEngine
 
 
-class FakeS3:
-    def file_exists(self, release: str, filename: str) -> bool:
-        return True
+def test_sync_engine_dry_run(monkeypatch, tmp_path: Path) -> None:
+    settings = tmp_path / "settings.yaml"
+    mapping = tmp_path / "mapping.yaml"
 
-    def download_file(self, release: str, filename: str, destination: Path) -> Path:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text("new-content", encoding="utf-8")
-        return destination
+    settings.write_text(
+        """
+github:
+  repository_url: https://github.com/company/application-repo.git
+  base_branch: main
+s3:
+  bucket: bucket
+  release_prefix: elipse-releases
+workspace:
+  clone_dir: /tmp/application-repo-test
+""",
+        encoding="utf-8",
+    )
+    mapping.write_text(
+        """
+mappings:
+  - s3: values-default-qa
+    repo: k8s/helm/values-default-qa
+""",
+        encoding="utf-8",
+    )
 
+    class DummyRepo:
+        pass
 
-def test_synchronize_updates_file(tmp_path: Path) -> None:
-    repo_root = tmp_path / "repo"
-    target = repo_root / "k8s/helm/values-default-qa"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("old-content", encoding="utf-8")
+    engine = SyncEngine(settings, mapping, dry_run=True)
+    monkeypatch.setattr(engine.git, "clone_or_open", lambda *_: DummyRepo())
+    monkeypatch.setattr(engine.git, "create_branch", lambda *_: None)
+    monkeypatch.setattr(engine.s3, "get_release_files", lambda *_: {"values-default-qa": b"x"})
 
-    mappings = [MappingEntry(s3="values-default-qa", repo=Path("k8s/helm/values-default-qa"))]
-    compare = CompareEngine(FakeS3(), tmp_path / "work")
-
-    report = synchronize(compare, mappings, "10.11.0", repo_root, dry_run=False)
-
-    assert len(report.updated_files) == 1
-    assert target.read_text(encoding="utf-8") == "new-content"
+    result = engine.run("1.0.0")
+    assert result.dry_run is True

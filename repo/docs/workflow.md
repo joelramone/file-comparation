@@ -1,27 +1,12 @@
 # Workflow
 
-## Local execution
-
-```bash
-python3 -m pip install -r automation/python/requirements.txt
-python3 -m automation.python.sync_engine \
-  --release 10.11.0 \
-  --bucket your-bucket \
-  --repo-root .
-```
-
-## Dry-run execution
-
-```bash
-python3 -m automation.python.sync_engine \
-  --release 10.11.0 \
-  --bucket your-bucket \
-  --repo-root . \
-  --dry-run
-```
-
-## CI pipeline execution
-
-Use `automation/jenkins/Jenkinsfile` with required credentials:
-- `vendor-s3-bucket-name`
-- `github-token`
+1. Validate release input (`X.Y.Z`).
+2. Load settings and mapping YAML.
+3. Clone/open target application repository.
+4. Checkout base branch and create `upgrade/<release>`.
+5. Download mapped files from S3 release path.
+6. Compare source and destination files by SHA256.
+7. Copy only changed files into `k8s/helm/` in the external repo.
+8. Generate manifest under `.sync/<release>.json`.
+9. Commit and push branch when changes exist.
+10. Open pull request in GitHub.

@@ -1,17 +1,18 @@
-"""Custom exceptions for synchronization workflow."""
-
-
 class SyncError(Exception):
-    """Base exception for sync workflow."""
+    """Base exception for synchronization failures."""
+
+
+class ConfigurationError(SyncError):
+    """Raised when settings or mappings are invalid."""
 
 
 class S3ReleaseNotFoundError(SyncError):
-    """Raised when a release prefix or files do not exist in S3."""
-
-
-class MappingValidationError(SyncError):
-    """Raised when mapping configuration is invalid."""
+    """Raised when release data is missing in S3."""
 
 
 class GitOperationError(SyncError):
     """Raised when a git operation fails."""
+
+
+class GitHubAPIError(SyncError):
+    """Raised when GitHub API request fails."""

@@ -1,57 +1,37 @@
-"""Comparison engine between S3 release files and repository files."""
-
 from __future__ import annotations
 
 from pathlib import Path
 
-from deepdiff import DeepDiff
-
-from .hash_utils import sha256_file
-from .models import CompareResult, FileRecord, FileStatus, MappingEntry
-from .s3_client import S3ReleaseClient
+from .hash_utils import sha256_bytes, sha256_file
+from .models import FileDiff, FileMapping, FileStatus
 
 
-class CompareEngine:
-    def __init__(self, s3_client: S3ReleaseClient, workdir: Path) -> None:
-        self.s3_client = s3_client
-        self.workdir = workdir
+def compare_files(source_name: str, source_content: bytes, destination_path: Path) -> FileDiff:
+    source_hash = sha256_bytes(source_content)
+    if not destination_path.exists():
+        return FileDiff(
+            source=source_name,
+            destination=destination_path,
+            status=FileStatus.ADDED,
+            source_sha256=source_hash,
+            destination_sha256=None,
+        )
 
-    def compare(self, release: str, mappings: list[MappingEntry], repo_root: Path) -> CompareResult:
-        records: list[FileRecord] = []
-        download_root = self.workdir / release
-        for mapping in mappings:
-            s3_file = mapping.s3
-            repo_path = repo_root / mapping.repo
-            tmp_download = download_root / s3_file
+    destination_hash = sha256_file(destination_path)
+    status = FileStatus.UNCHANGED if destination_hash == source_hash else FileStatus.MODIFIED
+    return FileDiff(
+        source=source_name,
+        destination=destination_path,
+        status=status,
+        source_sha256=source_hash,
+        destination_sha256=destination_hash,
+    )
 
-            s3_exists = self.s3_client.file_exists(release, s3_file)
-            repo_exists = repo_path.exists()
 
-            if s3_exists:
-                self.s3_client.download_file(release, s3_file, tmp_download)
-                s3_hash = sha256_file(tmp_download)
-            else:
-                s3_hash = None
-
-            repo_hash = sha256_file(repo_path) if repo_exists else None
-
-            if s3_exists and not repo_exists:
-                status = FileStatus.ADDED
-            elif not s3_exists and repo_exists:
-                status = FileStatus.REMOVED
-            elif s3_hash and repo_hash:
-                diff = DeepDiff({"h": s3_hash}, {"h": repo_hash}, ignore_order=True)
-                status = FileStatus.MODIFIED if diff else FileStatus.UNCHANGED
-            else:
-                status = FileStatus.UNCHANGED
-
-            records.append(
-                FileRecord(
-                    file=s3_file,
-                    repo_path=mapping.repo,
-                    s3_hash=s3_hash,
-                    repo_hash=repo_hash,
-                    status=status,
-                )
-            )
-        return CompareResult(release=release, records=records)
+def compare_release(source_files: dict[str, bytes], mappings: list[FileMapping], repo_root: Path) -> list[FileDiff]:
+    diffs: list[FileDiff] = []
+    for mapping in mappings:
+        destination = repo_root / mapping.repo
+        source = source_files[mapping.s3]
+        diffs.append(compare_files(mapping.s3, source, destination))
+    return sorted(diffs, key=lambda d: d.source)
