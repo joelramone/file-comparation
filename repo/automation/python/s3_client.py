@@ -1,26 +1,41 @@
 from __future__ import annotations
 
-from typing import Iterable
+from dataclasses import dataclass
 
 import boto3
-from botocore.client import BaseClient
+from botocore.exceptions import BotoCoreError, ClientError
 
-from .exceptions import S3ReleaseNotFoundError
-from .models import S3Config
+from .exceptions import S3Error
 
 
-class S3ReleaseClient:
-    def __init__(self, config: S3Config, client: BaseClient | None = None) -> None:
-        self._config = config
-        self._client = client or boto3.client("s3")
+@dataclass
+class S3Client:
+    bucket: str
+    release_prefix: str
 
-    def get_release_files(self, release: str, filenames: Iterable[str]) -> dict[str, bytes]:
-        data: dict[str, bytes] = {}
-        for name in filenames:
-            key = f"{self._config.release_prefix}/{release}/config/{name}"
-            try:
-                response = self._client.get_object(Bucket=self._config.bucket, Key=key)
-            except self._client.exceptions.NoSuchKey as exc:  # type: ignore[attr-defined]
-                raise S3ReleaseNotFoundError(f"Missing S3 key: s3://{self._config.bucket}/{key}") from exc
-            data[name] = response["Body"].read()
-        return data
+    def __post_init__(self) -> None:
+        self._client = boto3.client("s3")
+
+    def object_key(self, release: str, filename: str) -> str:
+        return f"{self.release_prefix}/{release}/config/{filename}"
+
+    def download_text(self, release: str, filename: str) -> bytes:
+        key = self.object_key(release, filename)
+        try:
+            response = self._client.get_object(Bucket=self.bucket, Key=key)
+            return response["Body"].read()
+        except (ClientError, BotoCoreError) as exc:
+            raise S3Error(f"Failed downloading s3://{self.bucket}/{key}") from exc
+
+    def list_releases(self) -> list[str]:
+        prefix = f"{self.release_prefix}/"
+        try:
+            response = self._client.list_objects_v2(Bucket=self.bucket, Prefix=prefix, Delimiter="/")
+        except (ClientError, BotoCoreError) as exc:
+            raise S3Error("Failed listing release versions") from exc
+        releases: list[str] = []
+        for item in response.get("CommonPrefixes", []):
+            value = item["Prefix"].removeprefix(prefix).strip("/")
+            if value:
+                releases.append(value)
+        return sorted(releases)

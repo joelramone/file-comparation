@@ -5,9 +5,9 @@ from git import Repo
 from automation.python.git_manager import GitManager
 
 
-def test_commit_all_without_changes(tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo"
-    repo_path.mkdir()
-    repo = Repo.init(repo_path)
+def test_commit_all(tmp_path: Path) -> None:
+    repo = Repo.init(tmp_path)
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("value", encoding="utf-8")
     manager = GitManager()
-    assert manager.commit_all(repo, "no changes") is False
+    assert manager.commit_all(repo, "initial") is True

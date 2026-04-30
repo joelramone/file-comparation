@@ -1,79 +1,66 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
-from pathlib import Path
-from typing import Any
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl
 
 
 class FileStatus(str, Enum):
     ADDED = "added"
+    REMOVED = "removed"
     MODIFIED = "modified"
     UNCHANGED = "unchanged"
-    REMOVED = "removed"
 
 
-class GitHubConfig(BaseModel):
+class MappingItem(BaseModel):
+    s3: str
+    repo: str
+
+
+class MappingConfig(BaseModel):
+    mappings: List[MappingItem]
+
+
+class GitHubSettings(BaseModel):
     repository_url: HttpUrl
     base_branch: str = "main"
 
 
-class S3Config(BaseModel):
+class S3Settings(BaseModel):
     bucket: str
     release_prefix: str
 
 
-class WorkspaceConfig(BaseModel):
-    clone_dir: Path
+class WorkspaceSettings(BaseModel):
+    clone_dir: str
 
 
 class Settings(BaseModel):
-    github: GitHubConfig
-    s3: S3Config
-    workspace: WorkspaceConfig
+    github: GitHubSettings
+    s3: S3Settings
+    workspace: WorkspaceSettings
 
 
-class FileMapping(BaseModel):
-    s3: str
-    repo: Path
-
-
-class MappingConfig(BaseModel):
-    mappings: list[FileMapping]
-
-
-class FileHash(BaseModel):
-    path: Path
-    sha256: str
-
-
-class FileDiff(BaseModel):
-    source: str
-    destination: Path
+class FileComparison(BaseModel):
+    s3_file: str
+    repo_file: str
+    s3_hash: Optional[str] = None
+    repo_hash: Optional[str] = None
     status: FileStatus
-    source_sha256: str
-    destination_sha256: str | None = None
 
 
-class ReleaseManifest(BaseModel):
+class Manifest(BaseModel):
     release: str
-    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    changes: list[FileDiff]
+    generated_at: datetime = Field(default_factory=datetime.utcnow)
+    dry_run: bool = False
+    comparisons: List[FileComparison]
 
 
 class SyncResult(BaseModel):
     release: str
     branch: str
-    changed_files: list[Path]
-    pr_url: str | None = None
-    dry_run: bool = False
-
-
-class LogEvent(BaseModel):
-    event: str
-    release: str | None = None
-    file: str | None = None
-    status: str | None = None
-    details: dict[str, Any] = Field(default_factory=dict)
+    dry_run: bool
+    changed_files: List[FileComparison]
+    pr_url: Optional[str] = None
