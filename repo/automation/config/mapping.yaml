@@ -1,0 +1,9 @@
+mappings:
+  - s3: values-default-qa
+    repo: k8s/helm/values-default-qa
+
+  - s3: SiteConfiguration.container-template
+    repo: k8s/helm/SiteConfiguration.container-template
+
+  - s3: SiteConfiguration.container-multisite-template
+    repo: k8s/helm/SiteConfiguration.container-multisite-template

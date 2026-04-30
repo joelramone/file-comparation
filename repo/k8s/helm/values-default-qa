@@ -1,0 +1,7 @@
+replicaCount: 2
+image:
+  repository: vendor/platform
+  tag: "10.10.0"
+service:
+  type: ClusterIP
+  port: 8080

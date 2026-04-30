@@ -1,0 +1,135 @@
+pipeline {
+  agent any
+
+  options {
+    ansiColor('xterm')
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  parameters {
+    string(name: 'RELEASE_VERSION', defaultValue: '', description: 'Vendor release version (e.g. 10.11.0)')
+    booleanParam(name: 'DRY_RUN', defaultValue: false, description: 'Run sync without changing files')
+  }
+
+  environment {
+    GIT_MAIN_BRANCH = 'main'
+    S3_BUCKET = credentials('vendor-s3-bucket-name')
+    S3_BASE_PREFIX = 'elipse-releases'
+    GITHUB_API = 'https://api.github.com'
+    REPO_SLUG = 'your-org/your-repo'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+        sh 'git checkout ${GIT_MAIN_BRANCH}'
+        sh 'git pull --ff-only origin ${GIT_MAIN_BRANCH}'
+      }
+    }
+
+    stage('Validate Release') {
+      steps {
+        sh 'automation/scripts/validate_release.sh ${RELEASE_VERSION}'
+      }
+    }
+
+    stage('Create Branch') {
+      steps {
+        script {
+          env.UPGRADE_BRANCH = "upgrade/${params.RELEASE_VERSION}"
+        }
+        sh 'git checkout -B ${UPGRADE_BRANCH}'
+      }
+    }
+
+    stage('Install Dependencies') {
+      steps {
+        sh 'python3 -m pip install --upgrade pip'
+        sh 'python3 -m pip install -r automation/python/requirements.txt'
+      }
+    }
+
+    stage('Run Sync Engine') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set -euo pipefail
+          export RELEASE_VERSION="${RELEASE_VERSION}"
+          export S3_BUCKET="${S3_BUCKET}"
+          export S3_BASE_PREFIX="${S3_BASE_PREFIX}"
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            export DRY_RUN=1
+          fi
+          automation/scripts/run_sync.sh
+        '''
+      }
+    }
+
+    stage('Commit and Push') {
+      when {
+        expression { return !params.DRY_RUN }
+      }
+      steps {
+        withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+          sh '''#!/usr/bin/env bash
+            set -euo pipefail
+            if [[ -z "$(git status --porcelain)" ]]; then
+              echo "No changes detected, skipping push and PR"
+              exit 0
+            fi
+
+            git config user.email "automation-bot@company.com"
+            git config user.name "automation-bot"
+            git add k8s/helm automation
+            git commit -m "chore: sync vendor config ${RELEASE_VERSION}"
+            git push -u origin "${UPGRADE_BRANCH}" --force
+          '''
+        }
+      }
+    }
+
+    stage('Create Pull Request') {
+      when {
+        expression { return !params.DRY_RUN }
+      }
+      steps {
+        withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+          sh '''#!/usr/bin/env bash
+            set -euo pipefail
+
+            if [[ -z "$(git status --porcelain)" ]]; then
+              echo "No changes committed, skipping PR creation"
+              exit 0
+            fi
+
+            payload=$(cat <<JSON
+{
+  "title": "chore: upgrade vendor config ${RELEASE_VERSION}",
+  "head": "${UPGRADE_BRANCH}",
+  "base": "${GIT_MAIN_BRANCH}",
+  "body": "Automated sync from S3 release ${RELEASE_VERSION}."
+}
+JSON
+)
+
+            curl -sSf \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -X POST "${GITHUB_API}/repos/${REPO_SLUG}/pulls" \
+              -d "${payload}"
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: '.automation-work/manifest.json', allowEmptyArchive: true
+    }
+    failure {
+      echo 'Pipeline failed. Review logs and troubleshooting guide.'
+    }
+  }
+}
