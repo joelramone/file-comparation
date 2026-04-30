@@ -1,0 +1,3 @@
+SITES=site-a,site-b
+MULTISITE_ENABLED=true
+DEFAULT_LOCALE=en_US
