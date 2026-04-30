@@ -1,20 +1,20 @@
 # Architecture
 
-The system is composed of modular components under `automation/python`:
+This repository is an automation control plane focused on synchronizing vendor configuration files from S3 into an external application repository.
 
-- `s3_client.py`: AWS S3 abstraction for release file checks and downloads.
-- `compare_engine.py`: deterministic comparison engine using SHA256 checksums.
-- `sync_engine.py`: orchestration CLI for compare + synchronize + manifest.
-- `manifest.py`: immutable JSON manifest generation for every run.
-- `logger.py`: structured JSON logging.
-- `models.py`: strongly typed Pydantic domain models.
+## Components
 
-## Data Flow
+- `automation/python/config_loader.py`: loads and validates YAML config through Pydantic.
+- `automation/python/s3_client.py`: fetches release artifacts from `s3://bucket/elipse-releases/<release>/config/`.
+- `automation/python/compare_engine.py`: deterministic file comparison using SHA256 hashes.
+- `automation/python/git_manager.py`: branch, commit, and push orchestration using GitPython.
+- `automation/python/github_client.py`: GitHub REST API PR automation.
+- `automation/python/sync_engine.py`: end-to-end orchestration, manifest generation, and structured logs.
 
-1. Jenkins triggers the process with a release version.
-2. Sync engine loads `automation/config/mapping.yaml`.
-3. Compare engine downloads mapped files from S3 into workspace.
-4. Hashes are calculated and statuses are computed (`added|removed|modified|unchanged`).
-5. On non-dry runs, changed files are copied into `k8s/helm`.
-6. A manifest is written to `.automation-work/manifest.json`.
-7. Jenkins commits, pushes, and opens a PR.
+## Design Principles
+
+- Stateless execution per release.
+- Strong typing with Pydantic models.
+- Config-driven mappings.
+- Dry-run support for safe validation.
+- JSON logs ready for SIEM ingestion.

@@ -1,100 +1,76 @@
-"""Main synchronization engine CLI."""
-
 from __future__ import annotations
 
-import argparse
-import json
-import shutil
-import sys
 from pathlib import Path
 
-import yaml
-
-from .compare_engine import CompareEngine
-from .exceptions import MappingValidationError
+from .compare_engine import compare_release
+from .config_loader import load_mappings, load_settings
+from .git_manager import GitManager
+from .github_client import GitHubClient
 from .logger import get_logger
 from .manifest import write_manifest
-from .models import MappingEntry, SyncReport
+from .models import FileStatus, ReleaseManifest, SyncResult
 from .s3_client import S3ReleaseClient
 
-LOGGER = get_logger("sync_engine")
+
+class SyncEngine:
+    def __init__(self, settings_path: Path, mapping_path: Path, dry_run: bool = False) -> None:
+        self.settings = load_settings(settings_path)
+        self.mapping = load_mappings(mapping_path)
+        self.dry_run = dry_run
+        self.logger = get_logger("sync_engine")
+        self.git = GitManager()
+        self.s3 = S3ReleaseClient(self.settings.s3)
+
+    def run(self, release: str) -> SyncResult:
+        branch = f"upgrade/{release}"
+        repo = self.git.clone_or_open(str(self.settings.github.repository_url), self.settings.workspace.clone_dir)
+        self.git.create_branch(repo, branch, self.settings.github.base_branch)
+
+        source_data = self.s3.get_release_files(release, [m.s3 for m in self.mapping.mappings])
+        diffs = compare_release(source_data, self.mapping.mappings, self.settings.workspace.clone_dir)
+
+        changed = []
+        for diff in diffs:
+            self.logger.info("file comparison", extra={"data": {"release": release, "file": diff.source, "status": diff.status.value}})
+            if diff.status in (FileStatus.ADDED, FileStatus.MODIFIED):
+                changed.append(diff.destination)
+                if not self.dry_run:
+                    diff.destination.parent.mkdir(parents=True, exist_ok=True)
+                    diff.destination.write_bytes(source_data[diff.source])
+
+        manifest = ReleaseManifest(release=release, changes=diffs)
+        write_manifest(self.settings.workspace.clone_dir / ".sync" / f"{release}.json", manifest)
+
+        pr_url = None
+        if changed and not self.dry_run:
+            committed = self.git.commit_all(repo, f"chore: sync vendor config for release {release}")
+            if committed:
+                self.git.push(repo, branch)
+                gh = GitHubClient.from_repo_url(str(self.settings.github.repository_url))
+                pr_url = gh.create_pull_request(
+                    title=gh.build_pr_title(release),
+                    body=gh.build_pr_body(release, [str(p) for p in changed]),
+                    head=branch,
+                    base=self.settings.github.base_branch,
+                )
+
+        return SyncResult(release=release, branch=branch, changed_files=changed, pr_url=pr_url, dry_run=self.dry_run)
 
 
-def load_mappings(path: Path) -> list[MappingEntry]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or "mappings" not in data:
-        raise MappingValidationError("mapping.yaml must contain top-level 'mappings'")
-    return [MappingEntry.model_validate(item) for item in data["mappings"]]
+def main() -> None:
+    import argparse
 
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Synchronize vendor release files from S3 into repo")
+    parser = argparse.ArgumentParser(description="Synchronize vendor configs from S3 to target repository")
     parser.add_argument("--release", required=True)
-    parser.add_argument("--bucket", required=True)
-    parser.add_argument("--base-prefix", default="elipse-releases")
-    parser.add_argument("--repo-root", default=".")
+    parser.add_argument("--settings", default="automation/config/settings.yaml")
     parser.add_argument("--mapping", default="automation/config/mapping.yaml")
-    parser.add_argument("--workspace", default=".automation-work")
-    parser.add_argument("--manifest", default=".automation-work/manifest.json")
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
 
-
-def synchronize(compare: CompareEngine, mappings: list[MappingEntry], release: str, repo_root: Path, dry_run: bool) -> SyncReport:
-    result = compare.compare(release=release, mappings=mappings, repo_root=repo_root)
-    updated_files: list[Path] = []
-
-    for record in result.changed:
-        LOGGER.info({"release": release, "file": record.file, "status": record.status.value})
-        src = compare.workdir / release / record.file
-        dst = repo_root / record.repo_path
-
-        if dry_run:
-            continue
-
-        if record.status.value == "removed":
-            if dst.exists():
-                dst.unlink()
-                updated_files.append(record.repo_path)
-            continue
-
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        updated_files.append(record.repo_path)
-
-    return SyncReport(
-        release=release,
-        dry_run=dry_run,
-        updated_files=updated_files,
-        compare_summary=result.as_summary(),
-    )
-
-
-def main() -> int:
-    args = parse_args()
-    repo_root = Path(args.repo_root).resolve()
-    workspace = (repo_root / args.workspace).resolve()
-    mapping_path = (repo_root / args.mapping).resolve()
-
-    try:
-        mappings = load_mappings(mapping_path)
-        s3_client = S3ReleaseClient(bucket=args.bucket, base_prefix=args.base_prefix)
-        compare = CompareEngine(s3_client=s3_client, workdir=workspace)
-
-        report = synchronize(compare, mappings, args.release, repo_root, args.dry_run)
-        manifest_path = write_manifest(
-            compare.compare(args.release, mappings, repo_root),
-            source_prefix=f"s3://{args.bucket}/{args.base_prefix}/{args.release}/config",
-            output_path=repo_root / args.manifest,
-        )
-
-        LOGGER.info({"event": "sync_completed", **report.model_dump(mode="json"), "manifest": str(manifest_path)})
-        print(json.dumps(report.model_dump(mode="json")))
-        return 0
-    except Exception as exc:  # noqa: BLE001
-        LOGGER.error({"event": "sync_failed", "error": str(exc)})
-        return 1
+    engine = SyncEngine(Path(args.settings), Path(args.mapping), dry_run=args.dry_run)
+    result = engine.run(args.release)
+    print(result.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

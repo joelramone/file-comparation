@@ -1,73 +1,79 @@
-"""Typed models for sync workflow."""
-
 from __future__ import annotations
 
-from enum import StrEnum
+from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
-class FileStatus(StrEnum):
+class FileStatus(str, Enum):
     ADDED = "added"
-    REMOVED = "removed"
     MODIFIED = "modified"
     UNCHANGED = "unchanged"
+    REMOVED = "removed"
 
 
-class MappingEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class GitHubConfig(BaseModel):
+    repository_url: HttpUrl
+    base_branch: str = "main"
 
-    s3: str = Field(min_length=1)
+
+class S3Config(BaseModel):
+    bucket: str
+    release_prefix: str
+
+
+class WorkspaceConfig(BaseModel):
+    clone_dir: Path
+
+
+class Settings(BaseModel):
+    github: GitHubConfig
+    s3: S3Config
+    workspace: WorkspaceConfig
+
+
+class FileMapping(BaseModel):
+    s3: str
     repo: Path
 
 
-class FileRecord(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class MappingConfig(BaseModel):
+    mappings: list[FileMapping]
 
-    file: str
-    repo_path: Path
-    s3_hash: str | None = None
-    repo_hash: str | None = None
+
+class FileHash(BaseModel):
+    path: Path
+    sha256: str
+
+
+class FileDiff(BaseModel):
+    source: str
+    destination: Path
     status: FileStatus
+    source_sha256: str
+    destination_sha256: str | None = None
 
 
-class CompareResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class ReleaseManifest(BaseModel):
     release: str
-    records: list[FileRecord]
-
-    @property
-    def changed(self) -> list[FileRecord]:
-        return [r for r in self.records if r.status != FileStatus.UNCHANGED]
-
-    def as_summary(self) -> dict[str, Any]:
-        counts = {status.value: 0 for status in FileStatus}
-        for record in self.records:
-            counts[record.status.value] += 1
-        return {
-            "release": self.release,
-            "total": len(self.records),
-            "changed": len(self.changed),
-            "counts": counts,
-        }
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    changes: list[FileDiff]
 
 
-class Manifest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class SyncResult(BaseModel):
     release: str
-    source_prefix: str
-    generated_at: str
-    records: list[FileRecord]
+    branch: str
+    changed_files: list[Path]
+    pr_url: str | None = None
+    dry_run: bool = False
 
 
-class SyncReport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    release: str
-    dry_run: bool
-    updated_files: list[Path]
-    compare_summary: dict[str, Any]
+class LogEvent(BaseModel):
+    event: str
+    release: str | None = None
+    file: str | None = None
+    status: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)

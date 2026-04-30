@@ -1,0 +1,10 @@
+github:
+  repository_url: "https://github.com/company/application-repo.git"
+  base_branch: "main"
+
+s3:
+  bucket: "bucket"
+  release_prefix: "elipse-releases"
+
+workspace:
+  clone_dir: "/tmp/application-repo"

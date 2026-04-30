@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-release="${1:-}"
-if [[ -z "${release}" ]]; then
-  echo "Usage: $0 <release-version>" >&2
-  exit 2
+RELEASE_VERSION="${1:-}"
+if [[ ! "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Invalid release version. Expected semantic version (example: 10.11.0)." >&2
+  exit 1
 fi
 
-if [[ ! "${release}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Invalid release format: ${release}. Expected semver X.Y.Z" >&2
-  exit 2
-fi
-
-echo "Release ${release} is valid"
+echo "Release version is valid: ${RELEASE_VERSION}"

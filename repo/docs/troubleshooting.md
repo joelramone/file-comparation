@@ -1,14 +1,18 @@
 # Troubleshooting
 
-## `mapping.yaml must contain top-level 'mappings'`
-Ensure `automation/config/mapping.yaml` is valid YAML with the `mappings` key.
+## Common issues
 
-## Missing S3 object errors
-Validate release path exists:
-- `s3://<bucket>/elipse-releases/<release>/config/<filename>`
+### Missing AWS credentials
+Ensure Jenkins injects `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
 
-## No changes detected in Jenkins
-Check if files in S3 and repository have identical SHA256 hash values.
+### Missing GitHub token
+Set `GITHUB_TOKEN` in pipeline credentials and ensure `repo` scope.
 
-## PR not created
-Confirm `github-token` credential has `repo` scope and repository slug is correct.
+### No changes detected
+If all hashes match, no commit or PR is created.
+
+### Invalid mapping path
+Check `automation/config/mapping.yaml` paths target `k8s/helm/`.
+
+### Branch push denied
+Validate token permissions for branch creation and push policies.
